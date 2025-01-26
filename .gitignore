@@ -1,0 +1,13 @@
+# 编译输出
+*.exe
+*.o
+*.res
+
+# IDE 配置
+.vscode/
+.vs/
+*.suo
+*.user
+
+# 其他
+*.log
