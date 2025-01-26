@@ -25,7 +25,12 @@
 
 ```bash
 windres resource.rc -O coff -o resource.res
-gcc -g shutdown_tool.c resource.res -o ShutdownTool.exe -mwindows -lcomctl32 -municode
+
+# x86
+gcc -g shutdown_tool.c resource.rc -o ShutdownTool_x86.exe -mwindows -lcomctl32 -municode
+
+# x64
+gcc -g shutdown_tool.c resource.rc -o ShutdownTool_x64.exe -mwindows -lcomctl32 -municode -m64
 ```
 
 ## 注意事项
