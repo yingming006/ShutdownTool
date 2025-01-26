@@ -11,6 +11,8 @@
 - 支持鼠标滚轮调整时间
 - 简洁的用户界面
 
+![Preview](./preview.png)
+
 ## 使用方法
 
 1. 选择需要的操作模式（关机/重启/休眠）
@@ -18,20 +20,6 @@
 3. 点击"确定"开始定时任务
 4. 点击"清除"可以取消定时任务
 5. 最小化时会自动隐藏到系统托盘
-
-## 编译方法
-
-使用 MinGW-w64 编译：
-
-```bash
-windres resource.rc -O coff -o resource.res
-
-# x86
-gcc -g shutdown_tool.c resource.rc -o ShutdownTool_x86.exe -mwindows -lcomctl32 -municode
-
-# x64
-gcc -g shutdown_tool.c resource.rc -o ShutdownTool_x64.exe -mwindows -lcomctl32 -municode -m64
-```
 
 ## 注意事项
 
