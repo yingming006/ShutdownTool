@@ -7,9 +7,6 @@
 - 支持设置天、时、分的定时
 - 支持关机、重启、休眠三种模式
 - 支持最小化到系统托盘
-- 自动保存定时任务，重启软件后恢复
-- 支持鼠标滚轮调整时间
-- 简洁的用户界面
 
 ![Preview](./preview.png)
 
@@ -20,10 +17,21 @@
 3. 点击"确定"开始定时任务
 4. 点击"清除"可以取消定时任务
 5. 最小化时会自动隐藏到系统托盘
+6. 退出程序会取消定时任务并退出
 
-## 注意事项
+## 编译命令
 
-- 使用 Windows 注册表保存配置
+```bash
+## x64
+windres resource.rc -o resource.o
+
+gcc -g shutdown_tool.c resource.o -o ShutdownTool_x64.exe -mwindows -lcomctl32 -luser32 -lgdi32 -lshell32 -municode
+
+## x86
+i686-w64-mingw32-windres resource.rc -o resource.o
+
+i686-w64-mingw32-gcc -g shutdown_tool.c resource.o -o ShutdownTool_x86.exe -mwindows -lcomctl32 -luser32 -lgdi32 -lshell32 -municode
+```
 
 ## 开源协议
 
