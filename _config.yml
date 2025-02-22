@@ -3,3 +3,4 @@ title: ShutdownTool
 description: 一个简单的 Windows 定时关机工具，支持定时关机、重启和休眠功能。
 github:
   repository_url: https://github.com/yingming006/ShutdownTool
+google_analytics: G-L6TLLTHPFX
