@@ -19,6 +19,7 @@
 #define ID_COUNTDOWN 1010  // 倒计时显示
 #define ID_MINIMIZE 1012   // 最小化按钮
 #define ID_EXIT 1013       // 退出按钮
+#define ID_URL 1014        // 超链接控件
 #define WM_TRAYICON (WM_USER + 1)  // 托盘消息
 #define ID_TRAYICON 1      // 托盘图标ID
 
@@ -199,7 +200,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                 return -1;  // 资源未初始化成功
             }
 
-            int windowWidth = 650;
+            int windowWidth = 500;  // 减小窗口宽度
             int radioWidth = 80;
             int radioSpacing = 10;
             int totalRadioWidth = 3 * radioWidth + 2 * radioSpacing;
@@ -265,7 +266,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
             // 创建倒计时显示标签
             hCountdownLabel = CreateWindowW(L"STATIC", L"",
                                            WS_VISIBLE | WS_CHILD | SS_CENTER,
-                                           50, 100, 550, 40, hwnd, (HMENU)ID_COUNTDOWN, NULL, NULL);
+                                           50, 100, 400, 40, hwnd, (HMENU)ID_COUNTDOWN, NULL, NULL);
             SendMessage(hCountdownLabel, WM_SETFONT, (WPARAM)hCountdownFont, TRUE);
             ShowWindow(hCountdownLabel, SW_HIDE);
 
@@ -294,6 +295,13 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                                            WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
                                            buttonStartX + 3 * (buttonWidth + buttonSpacing), 150, buttonWidth, 30, hwnd, (HMENU)ID_EXIT, NULL, NULL);
             SendMessage(hButtonExit, WM_SETFONT, (WPARAM)hGlobalFont, TRUE);
+
+            HWND hSepLine = CreateWindowW(L"Static", L"", SS_ETCHEDHORZ | WS_CHILD | WS_VISIBLE, 5, 190, 490, 10, hwnd, NULL, NULL, NULL);
+            SendMessage(hSepLine, WM_SETFONT, (WPARAM)hGlobalFont, TRUE);
+
+            // 创建超链接控件
+            HWND hURL = CreateWindowW(L"Static", L"软件主页：YINGMING006.GITHUB.IO/SHUTDOWNTOOL", WS_VISIBLE | WS_CHILD | SS_NOTIFY | SS_CENTER, 70, 196, 400, 30, hwnd, (HMENU)ID_URL, NULL, NULL);
+            SendMessage(hURL, WM_SETFONT, (WPARAM)hGlobalFont, TRUE);
             break;
         }
         case WM_COMMAND: {
@@ -324,6 +332,9 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                     case ID_EXIT:               // 退出按钮
                         CancelShutdownTool(hwnd);
                         DestroyWindow(hwnd);
+                        break;
+                    case ID_URL:                // 点击超链接
+                        ShellExecute(NULL, L"open", L"https://yingming006.github.io/ShutdownTool", NULL, NULL, SW_SHOWNORMAL);
                         break;
                 }
                 EnableWindow(hButton, TRUE);    // 恢复按钮可用状态
@@ -419,7 +430,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     // 计算窗口居中位置
     int screenWidth = GetSystemMetrics(SM_CXSCREEN);
     int screenHeight = GetSystemMetrics(SM_CYSCREEN);
-    int windowWidth = 650;
+    int windowWidth = 500;  // 减小窗口宽度
     int windowHeight = 250;
     int x = (screenWidth - windowWidth) / 2;
     int y = (screenHeight - windowHeight) / 2;
