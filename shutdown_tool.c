@@ -414,8 +414,32 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
 
 // 主函数
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow) {
+    // 创建互斥对象以确保单实例运行
+    HANDLE hMutex = CreateMutexW(NULL, TRUE, L"ShutdownToolMutex");
+    if (hMutex == NULL || GetLastError() == ERROR_ALREADY_EXISTS) {
+        // 如果互斥对象已存在，说明已有实例运行
+        HWND hExistingWnd = FindWindowW(L"ShutdownToolClass", L"定时关机工具");
+        if (hExistingWnd) {
+            // 如果窗口被最小化到托盘，则恢复它
+            if (IsIconic(hExistingWnd)) {
+                ShowWindow(hExistingWnd, SW_RESTORE);
+            }
+            // 将已有窗口置于前台
+            SetForegroundWindow(hExistingWnd);
+        }
+        // 释放互斥对象句柄并退出
+        if (hMutex) {
+            ReleaseMutex(hMutex);
+            CloseHandle(hMutex);
+        }
+        return 0;
+    }
+
+    // 初始化资源
     if (!InitResources()) {
         MessageBoxW(NULL, L"资源初始化失败！", L"错误", MB_OK | MB_ICONERROR);
+        ReleaseMutex(hMutex);
+        CloseHandle(hMutex);
         return 1;
     }
 
@@ -430,7 +454,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     // 计算窗口居中位置
     int screenWidth = GetSystemMetrics(SM_CXSCREEN);
     int screenHeight = GetSystemMetrics(SM_CYSCREEN);
-    int windowWidth = 500;  // 减小窗口宽度
+    int windowWidth = 500;
     int windowHeight = 250;
     int x = (screenWidth - windowWidth) / 2;
     int y = (screenHeight - windowHeight) / 2;
@@ -443,6 +467,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
     if (!hwnd) {
         CleanupResources();
+        ReleaseMutex(hMutex);
+        CloseHandle(hMutex);
         return 1;
     }
 
@@ -456,5 +482,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         DispatchMessage(&msg);
     }
 
+    // 程序退出时释放互斥对象
+    ReleaseMutex(hMutex);
+    CloseHandle(hMutex);
     return 0;
 }
