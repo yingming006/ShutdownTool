@@ -33,6 +33,10 @@ i686-w64-mingw32-windres resource.rc -o resource.o
 i686-w64-mingw32-gcc -g shutdown_tool.c resource.o -o ShutdownTool_x86.exe -mwindows -lcomctl32 -luser32 -lgdi32 -lshell32 -municode
 ```
 
+## 下载链接
+
+[蓝奏云](https://wwpr.lanzout.com/b00q0d37yf) 密码: `8jdk`
+
 ## 开源协议
 
 MIT License
