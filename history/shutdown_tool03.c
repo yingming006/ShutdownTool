@@ -21,8 +21,8 @@
 HWND hDay, hHour, hMinute;
 HWND hShutdownRadio, hRestartRadio, hSleepRadio;
 HWND hCountdownLabel; // 倒计时显示控件
-HFONT hGlobalFont; // 全局字体
 HBRUSH hBackgroundBrush; // 背景画刷
+HFONT hGlobalFont; // 全局字体
 int remainingSeconds = 0; // 剩余秒数
 
 // 启动进程（无控制台窗口）
@@ -79,15 +79,6 @@ void CancelShutdownTool() {
     }
 }
 
-// 填充下拉框选项
-void FillComboBox(HWND hComboBox, int start, int end) {
-    for (int i = start; i <= end; i++) {
-        wchar_t buffer[10];
-        swprintf(buffer, 10, L"%02d", i);
-        SendMessage(hComboBox, CB_ADDSTRING, 0, (LPARAM)buffer);
-    }
-    SendMessage(hComboBox, CB_SETCURSEL, 0, 0); // 默认选中第一个选项
-}
 
 // 更新倒计时显示
 void UpdateCountdown(HWND hwnd) {
@@ -108,6 +99,17 @@ void UpdateCountdown(HWND hwnd) {
     InvalidateRect(hCountdownLabel, NULL, TRUE); // 强制重绘倒计时标签
     UpdateWindow(hCountdownLabel); // 立即更新窗口
 }
+
+// 填充下拉框选项
+void FillComboBox(HWND hComboBox, int start, int end) {
+    for (int i = start; i <= end; i++) {
+        wchar_t buffer[10];
+        swprintf(buffer, 10, L"%02d", i);
+        SendMessage(hComboBox, CB_ADDSTRING, 0, (LPARAM)buffer);
+    }
+    SendMessage(hComboBox, CB_SETCURSEL, 0, 0); // 默认选中第一个选项
+}
+
 
 // 窗口过程函数
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
