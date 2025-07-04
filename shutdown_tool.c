@@ -1,459 +1,403 @@
 #include <windows.h>
-#include <commctrl.h>
 #include <stdio.h>
-#include "resource.h"
+#include <stdlib.h>
+#include <shellapi.h>
 
-#pragma comment(lib, "comctl32.lib")
-#pragma comment(linker, "/subsystem:windows /entry:wWinMainCRTStartup")
+#pragma comment(linker, "/manifestdependency:\"type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 
-// 定义控件ID
-#define ID_DAY 1001        // 天数选择控件
-#define ID_HOUR 1002       // 小时选择控件
-#define ID_MINUTE 1003     // 分钟选择控件
-#define ID_SCHEDULE 1004   // 确定按钮
-#define ID_CANCEL 1005     // 清除按钮
-#define ID_SHUTDOWN 1006   // 关机选项
-#define ID_RESTART 1007    // 重启选项
-#define ID_TIMER 1009      // 计时器ID
-#define ID_COUNTDOWN 1010  // 倒计时显示
-#define ID_MINIMIZE 1012   // 最小化按钮
-#define ID_EXIT 1013       // 退出按钮
-#define ID_URL 1014        // 超链接控件
-#define WM_TRAYICON (WM_USER + 1)  // 托盘消息
-#define ID_TRAYICON 1      // 托盘图标ID
+#define ID_ICON 1
+#define WM_TRAY_ICON_MSG (WM_APP + 1)
+#define ID_MENU_ABOUT 201
+#define ID_MENU_EXIT 202
 
-// 全局变量声明
-static HWND hDay, hHour, hMinute;                    // 时间选择控件句柄
-static HWND hShutdownRadio, hRestartRadio;           // 操作选项单选按钮
-static HWND hCountdownLabel;                         // 倒计时显示标签
-static HFONT hGlobalFont = NULL;                     // 全局字体
-static HBRUSH hBackgroundBrush = NULL;               // 背景画刷
-static HFONT hCountdownFont = NULL;                  // 倒计时字体
-static int remainingSeconds = 0;                     // 剩余秒数
-static BOOL isTimerRunning = FALSE;                  // 计时器运行状态
-static NOTIFYICONDATA nid = {0};                     // 托盘图标数据
-static wchar_t lastCountdownText[100] = {0};         // 上次倒计时文本
+#define ID_RADIO_SHUTDOWN 101
+#define ID_RADIO_REBOOT 102
+#define ID_RADIO_SLEEP 103
+#define ID_COMBO_DAY 104
+#define ID_COMBO_HOUR 105
+#define ID_COMBO_MINUTE 106
+#define ID_BUTTON_START 107
+#define ID_BUTTON_CLEAR 108
+#define ID_LABEL_COUNTDOWN 111
+#define ID_TIMER 1
 
-// 函数声明
-BOOL RunProcess(LPCWSTR command);                    // 执行系统命令
-void ShowErrorMessage(HWND hwnd, const wchar_t* message); // 显示错误消息
-void ScheduleShutdown(HWND hwnd, int days, int hours, int minutes, int operation); // 设置定时任务
-void CancelShutdownTool(HWND hwnd);                  // 取消定时任务
-void FillComboBox(HWND hComboBox, int start, int end); // 填充下拉框选项
-void UpdateCountdown(HWND hwnd);                     // 更新倒计时显示
-LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam); // 窗口消息处理
-BOOL InitResources(void);                            // 初始化资源
-void CleanupResources(void);                         // 清理资源
+#define OP_SHUTDOWN 0
+#define OP_REBOOT 1
+#define OP_SLEEP 2
 
-// 执行系统命令的函数
-BOOL RunProcess(LPCWSTR command) {
-    STARTUPINFOW si = {sizeof(si)};
-    PROCESS_INFORMATION pi = {0};
-    si.dwFlags = STARTF_USESHOWWINDOW;
-    si.wShowWindow = SW_HIDE;                       // 隐藏命令窗口
+LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
+void CreateControls(HWND hwnd);
+void PopulateComboBoxes();
+void UpdateCountdownDisplay();
+void StartCountdown(HWND hwnd);
+void ClearSettings(HWND hwnd);
+void SetControlsEnabled(BOOL bEnable);
+void ExecuteShutdownAction();
+BOOL CALLBACK SetChildFont(HWND hwnd, LPARAM lParam);
+void CreateTrayIcon(HWND hwnd, HICON hIcon);
+void ShowTrayMenu(HWND hwnd);
 
-    wchar_t cmd[256];
-    wcscpy(cmd, command);
-    cmd[255] = L'\0';
+HWND hRadioShutdown, hRadioReboot, hRadioSleep;
+HWND hComboDay, hComboHour, hComboMinute;
+HWND hBtnStart, hBtnClear;
+HWND hLabelCountdown;
+HFONT g_hFontUI, g_hFontCountdown;
+HBRUSH g_hBrushBkg;
+NOTIFYICONDATAW nid;
 
-    BOOL success = CreateProcessW(NULL, cmd, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
-    if (success) {
-        CloseHandle(pi.hProcess);
-        CloseHandle(pi.hThread);
-    }
-    return success;
-}
+UINT_PTR g_TimerID = 0;
+long long g_TotalSeconds = 0;
+BOOL g_isTimerRunning = FALSE;
+BOOL g_isPaused = FALSE;
+int g_selectedOperation = OP_SHUTDOWN;
 
-// 显示错误消息框
-void ShowErrorMessage(HWND hwnd, const wchar_t* message) {
-    MessageBoxW(hwnd, message, L"错误", MB_OK | MB_ICONERROR);
-}
+int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow)
+{
+    const wchar_t CLASS_NAME[] = L"ShutdownTimerClass";
+    HWND hExistingWnd;
 
-// 设置定时关机/重启任务
-void ScheduleShutdown(HWND hwnd, int days, int hours, int minutes, int operation) {
-    if (isTimerRunning) {
-        CancelShutdownTool(hwnd);
-    }
-
-    remainingSeconds = days * 86400 + hours * 3600 + minutes * 60;
-    if (remainingSeconds <= 0) return;
-
-    SetTimer(hwnd, ID_TIMER, 1000, NULL);
-    isTimerRunning = TRUE;
-    UpdateCountdown(hwnd);
-
-    SetWindowLongPtr(hwnd, GWLP_USERDATA, operation);
-}
-
-// 取消定时任务
-void CancelShutdownTool(HWND hwnd) {
-    if (!isTimerRunning) return;
-
-    remainingSeconds = 0;
-    KillTimer(hwnd, ID_TIMER);
-    ShowWindow(hCountdownLabel, SW_HIDE);
-    isTimerRunning = FALSE;
-    lastCountdownText[0] = L'\0';
-}
-
-// 填充下拉框选项
-void FillComboBox(HWND hComboBox, int start, int end) {
-    for (int i = start; i <= end; i++) {
-        wchar_t buffer[10];
-        swprintf(buffer, 10, L"%02d", i);
-        SendMessage(hComboBox, CB_ADDSTRING, 0, (LPARAM)buffer);
-    }
-    SendMessage(hComboBox, CB_SETCURSEL, 0, 0);
-}
-
-// 更新倒计时显示
-void UpdateCountdown(HWND hwnd) {
-    if (remainingSeconds <= 0) {
-        ShowWindow(hCountdownLabel, SW_HIDE);
-        return;
-    }
-
-    int days = remainingSeconds / 86400;
-    int hours = (remainingSeconds % 86400) / 3600;
-    int minutes = (remainingSeconds % 3600) / 60;
-    int seconds = remainingSeconds % 60;
-
-    wchar_t countdownText[100];
-    swprintf(countdownText, 100, L"倒计时: %02d 天 %02d 时 %02d 分 %02d 秒", 
-             days, hours, minutes, seconds);
-
-    if (wcscmp(countdownText, lastCountdownText) != 0) {
-        SetWindowTextW(hCountdownLabel, countdownText);
-        ShowWindow(hCountdownLabel, SW_SHOW);
-        wcscpy(lastCountdownText, countdownText);
-    }
-}
-
-// 初始化资源
-BOOL InitResources(void) {
-    hGlobalFont = CreateFont(20, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-                            OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
-                            DEFAULT_PITCH | FF_DONTCARE, L"微软雅黑");
-    if (!hGlobalFont) return FALSE;
-
-    hBackgroundBrush = CreateSolidBrush(RGB(240, 240, 240));
-    if (!hBackgroundBrush) {
-        DeleteObject(hGlobalFont);
-        hGlobalFont = NULL;
+    hExistingWnd = FindWindowW(CLASS_NAME, NULL);
+    if (hExistingWnd)
+    {
+        if (IsIconic(hExistingWnd))
+        {
+            ShowWindow(hExistingWnd, SW_RESTORE);
+        }
+        SetForegroundWindow(hExistingWnd);
+        
         return FALSE;
     }
 
-    hCountdownFont = CreateFont(30, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-                               OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
-                               DEFAULT_PITCH | FF_DONTCARE, L"微软雅黑");
-    if (!hCountdownFont) {
-        DeleteObject(hGlobalFont);
-        DeleteObject(hBackgroundBrush);
-        hGlobalFont = NULL;
-        hBackgroundBrush = NULL;
-        return FALSE;
-    }
-    return TRUE;
-}
+    const int WINDOW_WIDTH = 430, WINDOW_HEIGHT = 360;
+    HICON hIcon = LoadIconW(hInstance, MAKEINTRESOURCEW(ID_ICON));
+    g_hBrushBkg = CreateSolidBrush(RGB(240, 240, 240));
 
-// 清理资源
-void CleanupResources(void) {
-    if (hGlobalFont) {
-        DeleteObject(hGlobalFont);
-        hGlobalFont = NULL;
-    }
-    if (hBackgroundBrush) {
-        DeleteObject(hBackgroundBrush);
-        hBackgroundBrush = NULL;
-    }
-    if (hCountdownFont) {
-        DeleteObject(hCountdownFont);
-        hCountdownFont = NULL;
-    }
-}
-
-// 窗口消息处理函数
-LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
-    switch (uMsg) {
-        case WM_CREATE: {
-            if (!hGlobalFont || !hBackgroundBrush || !hCountdownFont) {
-                return -1;
-            }
-
-            int windowWidth = 500;
-            int radioWidth = 80;
-            int radioSpacing = 10;
-            int totalRadioWidth = 2 * radioWidth + radioSpacing;
-            int radioStartX = (windowWidth - totalRadioWidth) / 2;
-
-            hShutdownRadio = CreateWindowW(L"BUTTON", L"关机",
-                                          WS_VISIBLE | WS_CHILD | BS_AUTORADIOBUTTON | WS_GROUP,
-                                          radioStartX, 20, radioWidth, 30, hwnd, (HMENU)ID_SHUTDOWN, NULL, NULL);
-            SendMessage(hShutdownRadio, WM_SETFONT, (WPARAM)hGlobalFont, TRUE);
-
-            hRestartRadio = CreateWindowW(L"BUTTON", L"重启",
-                                         WS_VISIBLE | WS_CHILD | BS_AUTORADIOBUTTON,
-                                         radioStartX + radioWidth + radioSpacing, 20, radioWidth, 30, hwnd, (HMENU)ID_RESTART, NULL, NULL);
-            SendMessage(hRestartRadio, WM_SETFONT, (WPARAM)hGlobalFont, TRUE);
-
-            SendMessage(hShutdownRadio, BM_SETCHECK, BST_CHECKED, 0);
-
-            int comboBoxWidth = 60;
-            int labelWidth = 30;
-            int totalComboWidth = 3 * comboBoxWidth + 2 * labelWidth + 20;
-            int comboStartX = (windowWidth - totalComboWidth) / 2;
-
-            hDay = CreateWindowW(L"COMBOBOX", NULL,
-                                WS_VISIBLE | WS_CHILD | CBS_DROPDOWNLIST | WS_VSCROLL,
-                                comboStartX, 60, comboBoxWidth, 200, hwnd, (HMENU)ID_DAY, NULL, NULL);
-            FillComboBox(hDay, 0, 99);
-            SendMessage(hDay, WM_SETFONT, (WPARAM)hGlobalFont, TRUE);
-
-            HWND hLabelDay = CreateWindowW(L"STATIC", L"天",
-                                          WS_VISIBLE | WS_CHILD | SS_LEFT,
-                                          comboStartX + comboBoxWidth, 65, labelWidth, 20, hwnd, NULL, NULL, NULL);
-            SendMessage(hLabelDay, WM_SETFONT, (WPARAM)hGlobalFont, TRUE);
-
-            hHour = CreateWindowW(L"COMBOBOX", NULL,
-                                 WS_VISIBLE | WS_CHILD | CBS_DROPDOWNLIST | WS_VSCROLL,
-                                 comboStartX + comboBoxWidth + labelWidth + 10, 60, comboBoxWidth, 200, hwnd, (HMENU)ID_HOUR, NULL, NULL);
-            FillComboBox(hHour, 0, 23);
-            SendMessage(hHour, WM_SETFONT, (WPARAM)hGlobalFont, TRUE);
-
-            HWND hLabelHour = CreateWindowW(L"STATIC", L"时",
-                                           WS_VISIBLE | WS_CHILD | SS_LEFT,
-                                           comboStartX + 2 * comboBoxWidth + labelWidth + 10, 65, labelWidth, 20, hwnd, NULL, NULL, NULL);
-            SendMessage(hLabelHour, WM_SETFONT, (WPARAM)hGlobalFont, TRUE);
-
-            hMinute = CreateWindowW(L"COMBOBOX", NULL,
-                                   WS_VISIBLE | WS_CHILD | CBS_DROPDOWNLIST | WS_VSCROLL,
-                                   comboStartX + 2 * (comboBoxWidth + labelWidth) + 20, 60, comboBoxWidth, 200, hwnd, (HMENU)ID_MINUTE, NULL, NULL);
-            FillComboBox(hMinute, 0, 59);
-            SendMessage(hMinute, WM_SETFONT, (WPARAM)hGlobalFont, TRUE);
-
-            HWND hLabelMinute = CreateWindowW(L"STATIC", L"分",
-                                             WS_VISIBLE | WS_CHILD | SS_LEFT,
-                                             comboStartX + 3 * comboBoxWidth + 2 * labelWidth + 20, 65, labelWidth, 20, hwnd, NULL, NULL, NULL);
-            SendMessage(hLabelMinute, WM_SETFONT, (WPARAM)hGlobalFont, TRUE);
-
-            hCountdownLabel = CreateWindowW(L"STATIC", L"",
-                                           WS_VISIBLE | WS_CHILD | SS_CENTER,
-                                           50, 100, 400, 40, hwnd, (HMENU)ID_COUNTDOWN, NULL, NULL);
-            SendMessage(hCountdownLabel, WM_SETFONT, (WPARAM)hCountdownFont, TRUE);
-            ShowWindow(hCountdownLabel, SW_HIDE);
-
-            int buttonWidth = 100;
-            int buttonSpacing = 10;
-            int totalButtonWidth = 4 * buttonWidth + 3 * buttonSpacing;
-            int buttonStartX = (windowWidth - totalButtonWidth) / 2;
-
-            HWND hButtonSchedule = CreateWindowW(L"BUTTON", L"确定",
-                                               WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
-                                               buttonStartX, 150, buttonWidth, 30, hwnd, (HMENU)ID_SCHEDULE, NULL, NULL);
-            SendMessage(hButtonSchedule, WM_SETFONT, (WPARAM)hGlobalFont, TRUE);
-
-            HWND hButtonCancel = CreateWindowW(L"BUTTON", L"清除",
-                                             WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
-                                             buttonStartX + buttonWidth + buttonSpacing, 150, buttonWidth, 30, hwnd, (HMENU)ID_CANCEL, NULL, NULL);
-            SendMessage(hButtonCancel, WM_SETFONT, (WPARAM)hGlobalFont, TRUE);
-
-            HWND hButtonMinimize = CreateWindowW(L"BUTTON", L"最小化",
-                                               WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
-                                               buttonStartX + 2 * (buttonWidth + buttonSpacing), 150, buttonWidth, 30, hwnd, (HMENU)ID_MINIMIZE, NULL, NULL);
-            SendMessage(hButtonMinimize, WM_SETFONT, (WPARAM)hGlobalFont, TRUE);
-
-            HWND hButtonExit = CreateWindowW(L"BUTTON", L"退出程序",
-                                           WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
-                                           buttonStartX + 3 * (buttonWidth + buttonSpacing), 150, buttonWidth, 30, hwnd, (HMENU)ID_EXIT, NULL, NULL);
-            SendMessage(hButtonExit, WM_SETFONT, (WPARAM)hGlobalFont, TRUE);
-
-            HWND hSepLine = CreateWindowW(L"Static", L"", SS_ETCHEDHORZ | WS_CHILD | WS_VISIBLE, 5, 190, 490, 10, hwnd, NULL, NULL, NULL);
-            SendMessage(hSepLine, WM_SETFONT, (WPARAM)hGlobalFont, TRUE);
-
-            HWND hURL = CreateWindowW(L"Static", L"软件主页：YINGMING006.GITHUB.IO/SHUTDOWNTOOL", WS_VISIBLE | WS_CHILD | SS_NOTIFY | SS_CENTER, 70, 196, 400, 30, hwnd, (HMENU)ID_URL, NULL, NULL);
-            SendMessage(hURL, WM_SETFONT, (WPARAM)hGlobalFont, TRUE);
-            break;
-        }
-        case WM_COMMAND: {
-            if (HIWORD(wParam) == BN_CLICKED) {
-                HWND hButton = (HWND)lParam;
-                EnableWindow(hButton, FALSE);
-                switch (LOWORD(wParam)) {
-                    case ID_SCHEDULE: {
-                        int day = SendMessage(hDay, CB_GETCURSEL, 0, 0);
-                        int hour = SendMessage(hHour, CB_GETCURSEL, 0, 0);
-                        int minute = SendMessage(hMinute, CB_GETCURSEL, 0, 0);
-
-                        int operation = ID_SHUTDOWN;
-                        if (SendMessage(hRestartRadio, BM_GETCHECK, 0, 0) == BST_CHECKED) {
-                            operation = ID_RESTART;
-                        }
-                        ScheduleShutdown(hwnd, day, hour, minute, operation);
-                        break;
-                    }
-                    case ID_CANCEL:
-                        CancelShutdownTool(hwnd);
-                        break;
-                    case ID_MINIMIZE:
-                        ShowWindow(hwnd, SW_MINIMIZE);
-                        break;
-                    case ID_EXIT:
-                        CancelShutdownTool(hwnd);
-                        DestroyWindow(hwnd);
-                        break;
-                    case ID_URL:
-                        ShellExecute(NULL, L"open", L"https://yingming006.github.io/ShutdownTool", NULL, NULL, SW_SHOWNORMAL);
-                        break;
-                }
-                EnableWindow(hButton, TRUE);
-            }
-            break;
-        }
-        case WM_TIMER: {
-            if (wParam == ID_TIMER && remainingSeconds > 0) {
-                remainingSeconds--;
-                UpdateCountdown(hwnd);
-                if (remainingSeconds == 0) {
-                    KillTimer(hwnd, ID_TIMER);
-                    isTimerRunning = FALSE;
-
-                    int operation = (int)GetWindowLongPtr(hwnd, GWLP_USERDATA);
-
-                    wchar_t command[50];
-                    if (operation == ID_SHUTDOWN) {
-                        wcscpy(command, L"shutdown -s -t 0");
-                    } else if (operation == ID_RESTART) {
-                        wcscpy(command, L"shutdown -r -t 0");
-                    }
-
-                    if (!RunProcess(command)) {
-                        ShowErrorMessage(hwnd, L"执行命令失败！");
-                    }
-                }
-            }
-            break;
-        }
-        case WM_MOUSEWHEEL: {
-            HWND hFocus = GetFocus();
-            if (hFocus == hDay || hFocus == hHour || hFocus == hMinute) {
-                int delta = GET_WHEEL_DELTA_WPARAM(wParam);
-                int currentIndex = SendMessage(hFocus, CB_GETCURSEL, 0, 0);
-                int newIndex = currentIndex - (delta / WHEEL_DELTA);
-                int count = SendMessage(hFocus, CB_GETCOUNT, 0, 0);
-                newIndex = max(0, min(newIndex, count - 1));
-                SendMessage(hFocus, CB_SETCURSEL, newIndex, 0);
-            }
-            break;
-        }
-        case WM_ERASEBKGND: {
-            HDC hdc = (HDC)wParam;
-            RECT rect;
-            GetClientRect(hwnd, &rect);
-            FillRect(hdc, &rect, hBackgroundBrush);
-            return 1;
-        }
-        case WM_CTLCOLORSTATIC:
-        case WM_CTLCOLORBTN: {
-            HDC hdc = (HDC)wParam;
-            SetBkColor(hdc, RGB(240, 240, 240));
-            SetTextColor(hdc, RGB(0, 0, 0));
-            return (LRESULT)hBackgroundBrush;
-        }
-        case WM_SIZE: {
-            if (wParam == SIZE_MINIMIZED) {
-                ShowWindow(hwnd, SW_HIDE);
-                nid.cbSize = sizeof(NOTIFYICONDATA);
-                nid.hWnd = hwnd;
-                nid.uID = ID_TRAYICON;
-                nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
-                nid.uCallbackMessage = WM_TRAYICON;
-                nid.hIcon = LoadIcon(GetModuleHandle(NULL), MAKEINTRESOURCE(IDI_ICON1));
-                wcscpy(nid.szTip, L"定时关机工具");
-                Shell_NotifyIcon(NIM_ADD, &nid);
-            }
-            break;
-        }
-        case WM_TRAYICON: {
-            if (lParam == WM_LBUTTONDOWN) {
-                ShowWindow(hwnd, SW_RESTORE);
-                SetForegroundWindow(hwnd);
-                Shell_NotifyIcon(NIM_DELETE, &nid);
-            }
-            break;
-        }
-        case WM_DESTROY: {
-            Shell_NotifyIcon(NIM_DELETE, &nid);
-            CleanupResources();
-            PostQuitMessage(0);
-            break;
-        }
-        default:
-            return DefWindowProcW(hwnd, uMsg, wParam, lParam);
-    }
-    return 0;
-}
-
-// 主函数
-int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow) {
-    HANDLE hMutex = CreateMutexW(NULL, TRUE, L"ShutdownToolMutex");
-    if (hMutex == NULL || GetLastError() == ERROR_ALREADY_EXISTS) {
-        HWND hExistingWnd = FindWindowW(L"ShutdownToolClass", L"定时关机工具");
-        if (hExistingWnd) {
-            if (IsIconic(hExistingWnd)) {
-                ShowWindow(hExistingWnd, SW_RESTORE);
-            }
-            SetForegroundWindow(hExistingWnd);
-        }
-        if (hMutex) {
-            ReleaseMutex(hMutex);
-            CloseHandle(hMutex);
-        }
-        return 0;
-    }
-
-    if (!InitResources()) {
-        MessageBoxW(NULL, L"资源初始化失败！", L"错误", MB_OK | MB_ICONERROR);
-        ReleaseMutex(hMutex);
-        CloseHandle(hMutex);
-        return 1;
-    }
-
-    WNDCLASSW wc = {0};
+    WNDCLASSEXW wc = {0};
+    wc.cbSize = sizeof(WNDCLASSEXW);
     wc.lpfnWndProc = WindowProc;
     wc.hInstance = hInstance;
-    wc.lpszClassName = L"ShutdownToolClass";
-    wc.hIcon = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_ICON1));
-    RegisterClassW(&wc);
+    wc.hIcon = hIcon;
+    wc.hIconSm = hIcon;
+    wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+    wc.hbrBackground = g_hBrushBkg;
+    wc.lpszClassName = CLASS_NAME;
+    if (!RegisterClassExW(&wc))
+        return 0;
 
-    int screenWidth = GetSystemMetrics(SM_CXSCREEN);
-    int screenHeight = GetSystemMetrics(SM_CYSCREEN);
-    int windowWidth = 500;
-    int windowHeight = 250;
-    int x = (screenWidth - windowWidth) / 2;
-    int y = (screenHeight - windowHeight) / 2;
+    int screenWidth = GetSystemMetrics(SM_CXSCREEN), screenHeight = GetSystemMetrics(SM_CYSCREEN);
+    int centerX = (screenWidth - WINDOW_WIDTH) / 2, centerY = (screenHeight - WINDOW_HEIGHT) / 2;
 
-    HWND hwnd = CreateWindowExW(0, L"ShutdownToolClass", L"定时关机工具",
-                               WS_OVERLAPPED | WS_CAPTION,
-                               x, y, windowWidth, windowHeight,
-                               NULL, NULL, hInstance, NULL);
+    HWND hwnd = CreateWindowExW(0, CLASS_NAME, L"定时关机", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
+                                centerX, centerY, WINDOW_WIDTH, WINDOW_HEIGHT, NULL, NULL, hInstance, NULL);
+    if (hwnd == NULL)
+        return 0;
 
-    if (!hwnd) {
-        CleanupResources();
-        ReleaseMutex(hMutex);
-        CloseHandle(hMutex);
-        return 1;
-    }
-
-    SendMessage(hwnd, WM_SETFONT, (WPARAM)hGlobalFont, TRUE);
     ShowWindow(hwnd, nCmdShow);
-
-    MSG msg;
-    while (GetMessage(&msg, NULL, 0, 0)) {
+    UpdateWindow(hwnd);
+    MSG msg = {0};
+    while (GetMessage(&msg, NULL, 0, 0) > 0)
+    {
         TranslateMessage(&msg);
         DispatchMessage(&msg);
     }
+    return (int)msg.wParam;
+}
 
-    ReleaseMutex(hMutex);
-    CloseHandle(hMutex);
+LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+{
+    switch (uMsg)
+    {
+    case WM_CREATE:
+        g_hFontUI = CreateFontW(20, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
+        g_hFontCountdown = CreateFontW(35, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
+        CreateControls(hwnd);
+        CreateTrayIcon(hwnd, (HICON)LoadImageW(GetModuleHandle(NULL), MAKEINTRESOURCEW(ID_ICON), IMAGE_ICON, 16, 16, 0));
+        break;
+    case WM_TRAY_ICON_MSG:
+        switch (lParam)
+        {
+        case WM_LBUTTONDOWN:
+        case WM_LBUTTONDBLCLK:
+            ShowWindow(hwnd, SW_RESTORE);
+            SetForegroundWindow(hwnd);
+            break;
+        case WM_RBUTTONDOWN:
+            ShowTrayMenu(hwnd);
+            break;
+        }
+        break;
+    case WM_CTLCOLORSTATIC:
+    {
+        HDC hdcStatic = (HDC)wParam;
+        SetBkMode(hdcStatic, TRANSPARENT);
+        SetTextColor(hdcStatic, RGB(0, 0, 0));
+        return (LRESULT)g_hBrushBkg;
+    }
+    case WM_COMMAND:
+        switch (LOWORD(wParam))
+        {
+        case ID_RADIO_SHUTDOWN:
+            g_selectedOperation = OP_SHUTDOWN;
+            break;
+        case ID_RADIO_REBOOT:
+            g_selectedOperation = OP_REBOOT;
+            break;
+        case ID_RADIO_SLEEP:
+            g_selectedOperation = OP_SLEEP;
+            break;
+        case ID_BUTTON_START:
+            if (!g_isTimerRunning)
+                StartCountdown(hwnd);
+            else
+            {
+                g_isPaused = !g_isPaused;
+                SetWindowTextW(hBtnStart, g_isPaused ? L"继续" : L"暂停");
+            }
+            break;
+        case ID_BUTTON_CLEAR:
+            ClearSettings(hwnd);
+            break;
+        case ID_MENU_ABOUT:
+            ShellExecuteW(hwnd, L"open", L"https://yingming006.github.io/ShutdownTool/", NULL, NULL, SW_SHOW);
+            break;
+        case ID_MENU_EXIT:
+            DestroyWindow(hwnd);
+            break;
+        }
+        break;
+    case WM_SYSCOMMAND:
+        if (wParam == SC_CLOSE)
+        {
+            ShowWindow(hwnd, SW_HIDE);
+            return 0;
+        }
+        return DefWindowProc(hwnd, uMsg, wParam, lParam);
+    case WM_SIZE:
+        if (wParam == SIZE_MINIMIZED)
+        {
+            ShowWindow(hwnd, SW_HIDE);
+        }
+        break;
+    case WM_TIMER:
+        if (wParam == g_TimerID && !g_isPaused)
+        {
+            if (--g_TotalSeconds < 0)
+                g_TotalSeconds = 0;
+            UpdateCountdownDisplay();
+            if (g_TotalSeconds == 0)
+            {
+                KillTimer(hwnd, g_TimerID);
+                g_TimerID = 0;
+                ExecuteShutdownAction();
+                DestroyWindow(hwnd);
+            }
+        }
+        break;
+    case WM_CLOSE:
+        DestroyWindow(hwnd);
+        break;
+    case WM_DESTROY:
+        Shell_NotifyIconW(NIM_DELETE, &nid);
+        if (g_TimerID != 0)
+            KillTimer(hwnd, g_TimerID);
+        DeleteObject(g_hFontUI);
+        DeleteObject(g_hFontCountdown);
+        DeleteObject(g_hBrushBkg);
+        PostQuitMessage(0);
+        break;
+    default:
+        return DefWindowProc(hwnd, uMsg, wParam, lParam);
+    }
     return 0;
+}
+
+void CreateControls(HWND hwnd)
+{
+    HINSTANCE hInstance = (HINSTANCE)GetWindowLongPtr(hwnd, GWLP_HINSTANCE);
+    const int MARGIN = 15, GROUP_V_GAP = 12, GROUP_H_PADDING = 20, CONTROL_V_PADDING = 25;
+    const int COUNTDOWN_TOP_MARGIN = 15, BUTTON_AREA_TOP_MARGIN = 20;
+    int yPos = MARGIN, groupWidth = 430 - 2 * MARGIN;
+
+    HWND hGroupOp = CreateWindowExW(0, L"BUTTON", L" 操作选择 ", WS_CHILD | WS_VISIBLE | BS_GROUPBOX, MARGIN, yPos, groupWidth, 70, hwnd, NULL, hInstance, NULL);
+    int radioY = yPos + CONTROL_V_PADDING + 5, radioSlotWidth = (groupWidth - 2 * GROUP_H_PADDING) / 3;
+    hRadioShutdown = CreateWindowExW(0, L"BUTTON", L"关机", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON | WS_GROUP, MARGIN + GROUP_H_PADDING, radioY, 90, 30, hwnd, (HMENU)ID_RADIO_SHUTDOWN, hInstance, NULL);
+    hRadioReboot = CreateWindowExW(0, L"BUTTON", L"重启", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON, MARGIN + GROUP_H_PADDING + radioSlotWidth, radioY, 90, 30, hwnd, (HMENU)ID_RADIO_REBOOT, hInstance, NULL);
+    hRadioSleep = CreateWindowExW(0, L"BUTTON", L"睡眠", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON, MARGIN + GROUP_H_PADDING + 2 * radioSlotWidth, radioY, 90, 30, hwnd, (HMENU)ID_RADIO_SLEEP, hInstance, NULL);
+    SendMessage(hRadioShutdown, BM_SETCHECK, BST_CHECKED, 0);
+    yPos += 70 + GROUP_V_GAP;
+
+    HWND hGroupTime = CreateWindowExW(0, L"BUTTON", L" 时间设置 ", WS_CHILD | WS_VISIBLE | BS_GROUPBOX, MARGIN, yPos, groupWidth, 75, hwnd, NULL, hInstance, NULL);
+    int timeY = yPos + CONTROL_V_PADDING + 5, comboWidth = 80, labelWidth = 35, timeSlotWidth = (groupWidth - 2 * GROUP_H_PADDING) / 3, timeX_Start = MARGIN + GROUP_H_PADDING;
+    hComboDay = CreateWindowExW(0, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_CHILD | WS_VISIBLE, timeX_Start, timeY, comboWidth, 300, hwnd, (HMENU)ID_COMBO_DAY, hInstance, NULL);
+    CreateWindowExW(0, L"STATIC", L"天", WS_CHILD | WS_VISIBLE | SS_LEFT, timeX_Start + comboWidth + 8, timeY + 4, labelWidth, 30, hwnd, NULL, hInstance, NULL);
+    hComboHour = CreateWindowExW(0, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_CHILD | WS_VISIBLE, timeX_Start + timeSlotWidth, timeY, comboWidth, 300, hwnd, (HMENU)ID_COMBO_HOUR, hInstance, NULL);
+    CreateWindowExW(0, L"STATIC", L"时", WS_CHILD | WS_VISIBLE | SS_LEFT, timeX_Start + timeSlotWidth + comboWidth + 8, timeY + 4, labelWidth, 30, hwnd, NULL, hInstance, NULL);
+    hComboMinute = CreateWindowExW(0, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_CHILD | WS_VISIBLE, timeX_Start + 2 * timeSlotWidth, timeY, comboWidth, 300, hwnd, (HMENU)ID_COMBO_MINUTE, hInstance, NULL);
+    CreateWindowExW(0, L"STATIC", L"分", WS_CHILD | WS_VISIBLE | SS_LEFT, timeX_Start + 2 * timeSlotWidth + comboWidth + 8, timeY + 4, labelWidth, 30, hwnd, NULL, hInstance, NULL);
+    PopulateComboBoxes();
+    yPos += 75 + COUNTDOWN_TOP_MARGIN;
+
+    hLabelCountdown = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_CENTER, MARGIN, yPos, groupWidth, 45, hwnd, NULL, hInstance, NULL);
+    yPos += 45 + BUTTON_AREA_TOP_MARGIN;
+
+    int btnWidth = 120, btnHeight = 40;
+    int totalBtnWidth = 2 * btnWidth + 20;
+    int btnX_Start = (430 - totalBtnWidth) / 2;
+    hBtnStart = CreateWindowExW(0, L"BUTTON", L"确定", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON, btnX_Start, yPos, btnWidth, btnHeight, hwnd, (HMENU)ID_BUTTON_START, hInstance, NULL);
+    hBtnClear = CreateWindowExW(0, L"BUTTON", L"清除", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, btnX_Start + btnWidth + 20, yPos, btnWidth, btnHeight, hwnd, (HMENU)ID_BUTTON_CLEAR, hInstance, NULL);
+
+    EnumChildWindows(hwnd, SetChildFont, (LPARAM)g_hFontUI);
+    SendMessage(hLabelCountdown, WM_SETFONT, (WPARAM)g_hFontCountdown, TRUE);
+}
+
+void CreateTrayIcon(HWND hwnd, HICON hIcon)
+{
+    nid.cbSize = sizeof(NOTIFYICONDATAW);
+    nid.hWnd = hwnd;
+    nid.uID = ID_ICON;
+    nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
+    nid.uCallbackMessage = WM_TRAY_ICON_MSG;
+    nid.hIcon = hIcon;
+    wcscpy(nid.szTip, L"定时关机");
+    Shell_NotifyIconW(NIM_ADD, &nid);
+}
+
+void ShowTrayMenu(HWND hwnd)
+{
+    POINT pt;
+    GetCursorPos(&pt);
+    HMENU hMenu = CreatePopupMenu();
+    AppendMenuW(hMenu, MF_STRING, ID_MENU_ABOUT, L"关于");
+    AppendMenuW(hMenu, MF_STRING, ID_MENU_EXIT, L"退出");
+    SetForegroundWindow(hwnd);
+    TrackPopupMenu(hMenu, TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, NULL);
+    PostMessage(hwnd, WM_NULL, 0, 0);
+    DestroyMenu(hMenu);
+}
+
+BOOL CALLBACK SetChildFont(HWND hwnd, LPARAM lParam)
+{
+    SendMessage(hwnd, WM_SETFONT, (WPARAM)lParam, TRUE);
+    return TRUE;
+}
+void PopulateComboBoxes()
+{
+    wchar_t b[5];
+    for (int i = 0; i < 100; ++i)
+    {
+        wsprintfW(b, L"%02d", i);
+        SendMessage(hComboDay, CB_ADDSTRING, 0, (LPARAM)b);
+        SendMessage(hComboHour, CB_ADDSTRING, 0, (LPARAM)b);
+        SendMessage(hComboMinute, CB_ADDSTRING, 0, (LPARAM)b);
+    }
+    SendMessage(hComboDay, CB_SETCURSEL, 0, 0);
+    SendMessage(hComboHour, CB_SETCURSEL, 0, 0);
+    SendMessage(hComboMinute, CB_SETCURSEL, 0, 0);
+}
+void UpdateCountdownDisplay()
+{
+    if (g_TotalSeconds <= 0 && !g_isTimerRunning)
+    {
+        SetWindowTextW(hLabelCountdown, L"");
+        return;
+    }
+    long long r = g_TotalSeconds;
+    int d = r / 86400;
+    r %= 86400;
+    int h = r / 3600;
+    r %= 3600;
+    int m = r / 60;
+    int s = r % 60;
+    wchar_t ts[100] = {0}, t[20];
+    if (d > 0)
+    {
+        wsprintfW(t, L"%d天 ", d);
+        wcscat(ts, t);
+    }
+    if (h > 0 || d > 0)
+    {
+        wsprintfW(t, L"%02d时 ", h);
+        wcscat(ts, t);
+    }
+    if (m > 0 || h > 0 || d > 0)
+    {
+        wsprintfW(t, L"%02d分 ", m);
+        wcscat(ts, t);
+    }
+    wsprintfW(t, L"%02d秒", s);
+    wcscat(ts, t);
+    const wchar_t *os;
+    switch (g_selectedOperation)
+    {
+    case OP_REBOOT:
+        os = L"重启";
+        break;
+    case OP_SLEEP:
+        os = L"睡眠";
+        break;
+    default:
+        os = L"关机";
+        break;
+    }
+    wchar_t b[200];
+    wsprintfW(b, L"将在 %s 后 %s", ts, os);
+    SetWindowTextW(hLabelCountdown, b);
+}
+void StartCountdown(HWND hwnd)
+{
+    g_TotalSeconds = (long long)SendMessage(hComboDay, CB_GETCURSEL, 0, 0) * 86400 + (long long)SendMessage(hComboHour, CB_GETCURSEL, 0, 0) * 3600 + (long long)SendMessage(hComboMinute, CB_GETCURSEL, 0, 0) * 60;
+    if (g_TotalSeconds <= 0)
+    {
+        MessageBoxW(hwnd, L"请设置一个有效的倒计时长。", L"提示", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+    g_isTimerRunning = TRUE;
+    g_isPaused = FALSE;
+    g_TimerID = SetTimer(hwnd, ID_TIMER, 1000, NULL);
+    SetWindowTextW(hBtnStart, L"暂停");
+    SetControlsEnabled(FALSE);
+    UpdateCountdownDisplay();
+}
+void ClearSettings(HWND hwnd)
+{
+    if (g_TimerID != 0)
+    {
+        KillTimer(hwnd, g_TimerID);
+        g_TimerID = 0;
+    }
+    g_isTimerRunning = FALSE;
+    g_isPaused = FALSE;
+    g_TotalSeconds = 0;
+    SetWindowTextW(hBtnStart, L"确定");
+    SendMessage(hComboDay, CB_SETCURSEL, 0, 0);
+    SendMessage(hComboHour, CB_SETCURSEL, 0, 0);
+    SendMessage(hComboMinute, CB_SETCURSEL, 0, 0);
+    SendMessage(hRadioShutdown, BM_SETCHECK, BST_CHECKED, 0);
+    g_selectedOperation = OP_SHUTDOWN;
+    SetControlsEnabled(TRUE);
+    UpdateCountdownDisplay();
+}
+void SetControlsEnabled(BOOL bEnable)
+{
+    EnableWindow(hRadioShutdown, bEnable);
+    EnableWindow(hRadioReboot, bEnable);
+    EnableWindow(hRadioSleep, bEnable);
+    EnableWindow(hComboDay, bEnable);
+    EnableWindow(hComboHour, bEnable);
+    EnableWindow(hComboMinute, bEnable);
+}
+void ExecuteShutdownAction()
+{
+    switch (g_selectedOperation)
+    {
+    case OP_SHUTDOWN:
+        system("shutdown /s /t 0");
+        break;
+    case OP_REBOOT:
+        system("shutdown /r /t 0");
+        break;
+    case OP_SLEEP:
+        system("rundll32.exe powrprof.dll,SetSuspendState 0,1,0");
+        break;
+    }
 }

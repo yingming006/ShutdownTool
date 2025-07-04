@@ -1,36 +1,19 @@
 # Windows定时关机工具
 
-一个简单的 Windows 定时关机工具，支持定时关机和重启功能。
+一个简单的 Windows 定时关机工具，支持定时关机、重启和睡眠功能。
 
-## 功能特点
-
-- 支持设置天、时、分的定时
-- 支持关机和重启两种模式
-- 支持最小化到系统托盘
+## 截图
 
 ![Preview](./preview.png)
-
-## 使用方法
-
-1. 选择需要的操作模式（关机/重启）
-2. 设置定时时长（天/时/分）
-3. 点击"确定"开始定时任务
-4. 点击"清除"可以取消定时任务
-5. 点击"最小化"会自动隐藏到系统托盘
-6. 点击"退出程序"会取消定时任务并退出
 
 ## 编译命令
 
 ```bash
-## x64
 windres resource.rc -o resource.o
 
-gcc -g shutdown_tool.c resource.o -o ShutdownTool_x64.exe -mwindows -lcomctl32 -luser32 -lgdi32 -lshell32 -municode
+gcc shutdown_tool.c resource.o -o shutdown_tool.exe -Os -s -mwindows -municode -luser32 -lgdi32 -lshell32 -lcomctl32
 
-## x86
-i686-w64-mingw32-windres resource.rc -o resource.o
-
-i686-w64-mingw32-gcc -g shutdown_tool.c resource.o -o ShutdownTool_x86.exe -mwindows -lcomctl32 -luser32 -lgdi32 -lshell32 -municode
+upx --best shutdown_tool.exe
 ```
 
 ## 下载链接
