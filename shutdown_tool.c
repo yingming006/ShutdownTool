@@ -18,12 +18,15 @@
 #define ID_COMBO_MINUTE 106
 #define ID_BUTTON_START 107
 #define ID_BUTTON_CLEAR 108
+#define ID_CHECK_NOTIFY 109
 #define ID_LABEL_COUNTDOWN 111
 #define ID_TIMER 1
 
 #define OP_SHUTDOWN 0
 #define OP_REBOOT 1
 #define OP_SLEEP 2
+
+#define NOTIFICATION_TIME_SECONDS 55
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 void CreateControls(HWND hwnd);
@@ -40,6 +43,7 @@ void ShowTrayMenu(HWND hwnd);
 HWND hRadioShutdown, hRadioReboot, hRadioSleep;
 HWND hComboDay, hComboHour, hComboMinute;
 HWND hBtnStart, hBtnClear;
+HWND hCheckNotify;
 HWND hLabelCountdown;
 HFONT g_hFontUI, g_hFontCountdown;
 HBRUSH g_hBrushBkg;
@@ -49,6 +53,8 @@ UINT_PTR g_TimerID = 0;
 long long g_TotalSeconds = 0;
 BOOL g_isTimerRunning = FALSE;
 BOOL g_isPaused = FALSE;
+BOOL g_bNotifyBeforeEnd = FALSE;
+BOOL g_bNotificationShown = FALSE;
 int g_selectedOperation = OP_SHUTDOWN;
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow)
@@ -59,16 +65,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     hExistingWnd = FindWindowW(CLASS_NAME, NULL);
     if (hExistingWnd)
     {
-        if (IsIconic(hExistingWnd))
-        {
-            ShowWindow(hExistingWnd, SW_RESTORE);
-        }
+        ShowWindow(hExistingWnd, SW_RESTORE);
         SetForegroundWindow(hExistingWnd);
-        
         return FALSE;
     }
 
-    const int WINDOW_WIDTH = 430, WINDOW_HEIGHT = 360;
+    const int WINDOW_WIDTH = 430, WINDOW_HEIGHT = 380;
     HICON hIcon = LoadIconW(hInstance, MAKEINTRESOURCEW(ID_ICON));
     g_hBrushBkg = CreateSolidBrush(RGB(240, 240, 240));
 
@@ -126,12 +128,22 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
             break;
         }
         break;
-    case WM_CTLCOLORSTATIC:
+   case WM_CTLCOLORSTATIC:
     {
         HDC hdcStatic = (HDC)wParam;
-        SetBkMode(hdcStatic, TRANSPARENT);
+        HWND hwndStatic = (HWND)lParam;
+
         SetTextColor(hdcStatic, RGB(0, 0, 0));
-        return (LRESULT)g_hBrushBkg;
+        if (hwndStatic == hLabelCountdown)
+        {
+            SetBkColor(hdcStatic, RGB(240, 240, 240));
+            return (LRESULT)GetStockObject(NULL_BRUSH);
+        }
+        else
+        {
+            SetBkMode(hdcStatic, TRANSPARENT);
+            return (LRESULT)g_hBrushBkg;
+        }
     }
     case WM_COMMAND:
         switch (LOWORD(wParam))
@@ -157,6 +169,12 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
         case ID_BUTTON_CLEAR:
             ClearSettings(hwnd);
             break;
+        case ID_CHECK_NOTIFY:
+            {
+                LRESULT state = SendMessage(hCheckNotify, BM_GETCHECK, 0, 0);
+                g_bNotifyBeforeEnd = (state == BST_CHECKED);
+            }
+            break;
         case ID_MENU_ABOUT:
             ShellExecuteW(hwnd, L"open", L"https://yingming006.github.io/ShutdownTool/", NULL, NULL, SW_SHOW);
             break;
@@ -181,6 +199,21 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
     case WM_TIMER:
         if (wParam == g_TimerID && !g_isPaused)
         {
+            if (g_bNotifyBeforeEnd && !g_bNotificationShown && g_TotalSeconds == NOTIFICATION_TIME_SECONDS)
+            {
+                g_bNotificationShown = TRUE;
+                const wchar_t *opStr;
+                switch (g_selectedOperation)
+                {
+                    case OP_REBOOT: opStr = L"重启"; break;
+                    case OP_SLEEP: opStr = L"睡眠"; break;
+                    default: opStr = L"关机"; break;
+                }
+                wchar_t msg[256];
+                wsprintfW(msg, L"程序将在 %d 秒后执行【%s】操作。\n请及时保存您的工作！", NOTIFICATION_TIME_SECONDS, opStr);
+                MessageBoxW(hwnd, msg, L"操作提醒", MB_OK | MB_ICONWARNING);
+            }
+
             if (--g_TotalSeconds < 0)
                 g_TotalSeconds = 0;
             UpdateCountdownDisplay();
@@ -215,7 +248,7 @@ void CreateControls(HWND hwnd)
 {
     HINSTANCE hInstance = (HINSTANCE)GetWindowLongPtr(hwnd, GWLP_HINSTANCE);
     const int MARGIN = 15, GROUP_V_GAP = 12, GROUP_H_PADDING = 20, CONTROL_V_PADDING = 25;
-    const int COUNTDOWN_TOP_MARGIN = 15, BUTTON_AREA_TOP_MARGIN = 20;
+    const int COUNTDOWN_TOP_MARGIN = 15;
     int yPos = MARGIN, groupWidth = 430 - 2 * MARGIN;
 
     HWND hGroupOp = CreateWindowExW(0, L"BUTTON", L" 操作选择 ", WS_CHILD | WS_VISIBLE | BS_GROUPBOX, MARGIN, yPos, groupWidth, 70, hwnd, NULL, hInstance, NULL);
@@ -238,7 +271,12 @@ void CreateControls(HWND hwnd)
     yPos += 75 + COUNTDOWN_TOP_MARGIN;
 
     hLabelCountdown = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_CENTER, MARGIN, yPos, groupWidth, 45, hwnd, NULL, hInstance, NULL);
-    yPos += 45 + BUTTON_AREA_TOP_MARGIN;
+    yPos += 45;
+
+    int checkWidth = 120, checkHeight = 25;
+    int checkX = (430 - checkWidth) / 2;
+    hCheckNotify = CreateWindowExW(0, L"BUTTON", L"结束前提示", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, checkX, yPos, checkWidth, checkHeight, hwnd, (HMENU)ID_CHECK_NOTIFY, hInstance, NULL);
+    yPos += checkHeight + 5;
 
     int btnWidth = 120, btnHeight = 40;
     int totalBtnWidth = 2 * btnWidth + 20;
@@ -287,8 +325,14 @@ void PopulateComboBoxes()
     {
         wsprintfW(b, L"%02d", i);
         SendMessage(hComboDay, CB_ADDSTRING, 0, (LPARAM)b);
-        SendMessage(hComboHour, CB_ADDSTRING, 0, (LPARAM)b);
-        SendMessage(hComboMinute, CB_ADDSTRING, 0, (LPARAM)b);
+        if (i < 60)
+        {
+            SendMessage(hComboMinute, CB_ADDSTRING, 0, (LPARAM)b);
+        }
+        if (i < 24)
+        {
+            SendMessage(hComboHour, CB_ADDSTRING, 0, (LPARAM)b);
+        }
     }
     SendMessage(hComboDay, CB_SETCURSEL, 0, 0);
     SendMessage(hComboHour, CB_SETCURSEL, 0, 0);
@@ -353,6 +397,7 @@ void StartCountdown(HWND hwnd)
     }
     g_isTimerRunning = TRUE;
     g_isPaused = FALSE;
+    g_bNotificationShown = FALSE;
     g_TimerID = SetTimer(hwnd, ID_TIMER, 1000, NULL);
     SetWindowTextW(hBtnStart, L"暂停");
     SetControlsEnabled(FALSE);
@@ -367,6 +412,7 @@ void ClearSettings(HWND hwnd)
     }
     g_isTimerRunning = FALSE;
     g_isPaused = FALSE;
+    g_bNotificationShown = FALSE;
     g_TotalSeconds = 0;
     SetWindowTextW(hBtnStart, L"确定");
     SendMessage(hComboDay, CB_SETCURSEL, 0, 0);
@@ -374,6 +420,8 @@ void ClearSettings(HWND hwnd)
     SendMessage(hComboMinute, CB_SETCURSEL, 0, 0);
     SendMessage(hRadioShutdown, BM_SETCHECK, BST_CHECKED, 0);
     g_selectedOperation = OP_SHUTDOWN;
+    SendMessage(hCheckNotify, BM_SETCHECK, BST_UNCHECKED, 0);
+    g_bNotifyBeforeEnd = FALSE;
     SetControlsEnabled(TRUE);
     UpdateCountdownDisplay();
 }
