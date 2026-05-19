@@ -4,9 +4,7 @@ layout: default
 
 ## 下载
 
-[x64](https://github.com/yingming006/ShutdownTool/releases/download/1.0/ShutdownTool_x64.exe)
-
-[x86](https://github.com/yingming006/ShutdownTool/releases/download/1.0/ShutdownTool_x86.exe)
+[v0.0.1](https://github.com/yingming006/ShutdownTool/releases/download/0.0.1/ShutdownTool.exe)
 
 ## 截图
 
